@@ -114,6 +114,7 @@ textarea {
 .visible {
   visibility: visible!important;
 }
+
 .box {
   display: -webkit-box;
   display: -moz-box;
@@ -146,6 +147,15 @@ textarea {
   text-align: center;
   font-style: italic;
   color: #ccc;
+}
+.w-empty-data {
+  position: absolute;
+  width: 100px;
+  text-align: center;
+  color: #aaa;
+  top: 50%;
+  left: 50%;
+  margin: -20px 0 0 -50px;
 }
 .w-expand-collapse {
   margin-left: 5px;

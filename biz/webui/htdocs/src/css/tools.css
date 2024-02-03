@@ -159,7 +159,10 @@
 
 .w-detail-log .w-textarea-bar .w-menu-item {
   top: 21px;
-  right: 0;
+}
+
+.w-detail-log .w-textarea-bar .w-refresh-menu-list {
+  padding-bottom: 2px;
 }
 
 .w-detail-log .w-textarea-bar a {
@@ -229,6 +232,10 @@
 
 .w-mock-dialog .modal-dialog {
   width: 1000px;
+}
+
+.w-mock-dialog .modal-dialog select {
+  background-color: #f6f6f6;
 }
 
 .w-rules-dialog .modal-dialog {
@@ -321,7 +328,14 @@
 }
 
 .w-url-pattern {
-  width: 840px;
+  width: 778px;
+  border-top-right-radius: 0!important;
+  border-bottom-right-radius: 0!important;
+}
+
+.w-mock-row .w-composer-params {
+  line-height: 30px;
+  border-left: none;
 }
 
 .w-mock-protocol {
@@ -338,12 +352,31 @@
 .w-mock-key-name {
   width: 375px;
   margin: 0 10px 0 0;
+  margin-left: 10px;
+  font-weight: bold;
 }
 
 .w-mock-value-type {
   width: 170px;
   padding-right: 10px;
 }
+
+.w-mock-comment {
+  display: none;
+}
+
+.w-mock-file .w-mock-comment {
+  margin-left: 20px;
+  display: inline-block;
+  color: #555;
+}
+
+.w-mock-file .w-mock-comment input {
+  margin-left: 5px;
+  width: 300px;
+  font-weight: normal;
+  font-size: 12px;
+ }
 
 .w-mock-dialog .modal-footer select {
   width: 220px;
@@ -418,7 +451,7 @@
   font-size: 13px;
 }
 
-.w-mock-dialog .glyphicon-trash {
+.w-mock-dialog .w-mock-row .glyphicon-trash {
   position: absolute;
   display: inline-block;
   width: 16px;
@@ -426,4 +459,15 @@
   right: 18px;
   color: #747474;
   cursor: pointer;
+}
+
+.w-mock-dialog .w-composer-params-editor {
+  top: 60px;
+  right: 30px;
+  width: 840px;
+}
+
+.w-composer-params-editor .w-params-clear-btn .glyphicon-trash {
+  width: 16px;
+  margin-right: 0;
 }

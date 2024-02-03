@@ -66,15 +66,29 @@ function comparePlugin(p1, p2) {
 exports.compare = compare;
 exports.comparePlugin = comparePlugin;
 
-exports.isString = function (str) {
+function isString(str) {
   return typeof str === 'string';
-};
+}
+
+exports.isString = isString;
+
+function getString(str) {
+  return isString(str) ? str : '';
+}
+
+exports.getString = getString;
 
 function notEStr(str) {
   return str && typeof str === 'string';
 }
 
 exports.notEStr = notEStr;
+
+function isBool(b) {
+  return typeof b === 'boolean';
+}
+
+exports.isBool = isBool;
 
 exports.parseLogs = function (str) {
   try {
@@ -106,6 +120,13 @@ exports.parseLogs = function (str) {
     }
   }
   return result;
+};
+
+exports.copyText = function(text, tips) {
+  var btn = $('#copyTextBtn');
+  btn.attr('data-clipboard-text', text);
+  btn.removeClass().addClass('w-copy-text' + (tips ? '-with-tips' : ''));
+  btn.trigger('click');
 };
 
 exports.preventDefault = function preventDefault(e) {
@@ -420,6 +441,9 @@ function getHost(url) {
   start = start == -1 ? 0 : start + 3;
   var end = url.indexOf('/', start);
   url = end == -1 ? url.substring(start) : url.substring(start, end);
+  if (url && (url.indexOf('?') !== -1 || url.indexOf('#') !== -1)) {
+    url = url.replace(/[?#].*$/, '');
+  }
   return url;
 }
 
@@ -573,9 +597,9 @@ function getContentEncoding(headers) {
   return encoding === 'gzip' || encoding === 'deflate' ? encoding : null;
 }
 
-exports.getOriginalReqHeaders = function (item) {
+exports.getOriginalReqHeaders = function (item, rulesHeaders) {
   var req = item.req;
-  var headers = $.extend({}, req.headers, item.rulesHeaders, true);
+  var headers = $.extend({}, req.headers, rulesHeaders || item.rulesHeaders, true);
   if (item.clientId && !headers['x-whistle-client-id']) {
     headers['x-whistle-client-id'] = item.clientId;
   }
@@ -944,6 +968,57 @@ function openEditor(value) {
 
 exports.openEditor = openEditor;
 
+exports.openInNewWin = function(value) {
+  var win = window.open('editor.html');
+  win.getValue = function () {
+    return value;
+  };
+  if (win.setValue) {
+    win.setValue(value);
+  }
+};
+
+function getMockValues(values) {
+  if (!values || (!isString(values.value) && !isString(values.base64)) ||
+    (!values.isFile && !notEStr(values.name))) {
+    return;
+  }
+  return values;
+}
+
+function getMockData(data) {
+  if (!Array.isArray(data) || data.length > 2 || !notEStr(data[0])) {
+    return;
+  }
+  return {
+    rules: data[0].substring(0, 3000),
+    values: getMockValues(data[1])
+  };
+}
+
+exports.pluginIsDisabled = function(props, name) {
+  var disabledPlugins = props.disabledPlugins || {};
+  return !props.ndp && (props.disabledAllPlugins || disabledPlugins[name]);
+};
+
+exports.handleImportData = function(data) {
+  if (data) {
+    if (data.type === 'setNetworkSettings') {
+      events.trigger('setNetworkSettings', data);
+      return true;
+    }
+    if (data.type === 'setComposerData') {
+      events.trigger('setComposerData', data);
+      return true;
+    }
+  }
+  var mockData = getMockData(data);
+  if (mockData) {
+    events.trigger('showRulesDialog', mockData);
+  }
+  return mockData;
+};
+
 var rentity = /['<> "&]/g;
 var entities = {
   '"': '&quot;',
@@ -1060,7 +1135,7 @@ exports.asCURL = function (item) {
   if (body && (body.length <= MAX_CURL_BODY || isText(req.headers) || isUrlEncoded(req))) {
     result.push('-d', formatBody(body));
   }
-  return result.join(' ');
+  return result.join(' ').replace(/!/g, '\\!');
 };
 
 exports.parseHeadersFromHar = function (list) {
@@ -1212,18 +1287,13 @@ exports.triggerListChange = function (name, data) {
   } catch (e) {}
 };
 
-var REG_EXP = /^\/(.+)\/(i?m?|m?i)$/;
+var REG_EXP = /^\/(.+)\/([miu]{0,3})$/;
 exports.toRegExp = function (regExp) {
-  if (!regExp) {
-    return;
+  if (regExp && REG_EXP.test(regExp)) {
+    try {
+      return new RegExp(RegExp.$1, RegExp.$2);
+    } catch (e) {}
   }
-  regExp = REG_EXP.test(regExp);
-  try {
-    regExp = regExp && new RegExp(RegExp.$1, RegExp.$2);
-  } catch (e) {
-    return;
-  }
-  return regExp;
 };
 
 function getPadding(len) {
@@ -1448,7 +1518,7 @@ function getCharset(res) {
   return 'UTF8';
 }
 
-exports.openPreview = function (data) {
+function getPreviewUrl(data) {
   if (!data) {
     return;
   }
@@ -1471,8 +1541,15 @@ exports.openPreview = function (data) {
       (url.indexOf('?') === -1 ? '' : '&') +
       '???WHISTLE_PREVIEW_CHARSET=' +
       charset;
-    window.open(url + '???#' + (isImg ? getBody(res) : res.base64));
+    return url + '???#' + (isImg ? getBody(res) : res.base64);
   }
+}
+
+exports.getPreviewUrl = getPreviewUrl;
+
+exports.openPreview = function (data) {
+  var url = getPreviewUrl(data);
+  url && window.open(url);
 };
 
 function parseRawJson(str, quite) {
@@ -1692,20 +1769,27 @@ exports.readFileAsText = function (file, callback) {
   return readFile(file, callback, 'text');
 };
 
-exports.addPluginMenus = function (item, list, maxTop, disabled, treeId) {
+exports.addPluginMenus = function (item, list, maxTop, disabled, treeId, url) {
   var pluginsList = (item.list = list);
   var count = pluginsList.length;
   if (count) {
     item.hide = false;
     var disabledOthers = disabled;
+    var curUrl = treeId || url;
     for (var j = 0; j < count; j++) {
       var plugin = pluginsList[j];
+      var pattern = plugin._urlPattern;
       if (plugin.required || plugin.requiredTreeNode) {
         var disd = disabled && (!plugin.requiredTreeNode || !treeId);
+        if (!disd && (pattern && (!curUrl || !pattern.test(curUrl)))) {
+          disd = true;
+        }
         plugin.disabled = disd;
         if (!disd) {
           disabledOthers = false;
         }
+      } else if (pattern && (!curUrl || !pattern.test(curUrl))) {
+        plugin.disabled = true;
       } else {
         disabledOthers = plugin.disabled = false;
       }
@@ -2152,6 +2236,9 @@ function parseResCookie(cookie) {
     case 'secure':
       result.secure = true;
       break;
+    case 'partitioned':
+      result.partitioned = true;
+      break;
     case 'samesite':
       result.sameSite = cookie[i];
       result.samesite = cookie[i];
@@ -2313,6 +2400,10 @@ exports.toHar = function (item) {
     whistleVersion: item.version,
     whistleNodeVersion: item.nodeVersion,
     whistleRealUrl: item.realUrl,
+    whistleCaptureError: item.captureError,
+    whistleReqError: item.reqError,
+    whistleIsHttps: item.isHttps,
+    whistleResError: item.resError,
     whistleTimes: {
       startTime: item.startTime,
       dnsTime: item.dnsTime,
@@ -2401,6 +2492,7 @@ function filterJson(obj, keyword, filterType) {
   }
   var type = typeof obj;
   var isKey = filterType === 1;
+  var isVal = filterType > 1;
   if (type === 'string' || type === 'number' || type === 'boolean') {
     return !isKey && String(obj).toLowerCase().indexOf(keyword) !== -1;
   }
@@ -2408,15 +2500,18 @@ function filterJson(obj, keyword, filterType) {
     return false;
   }
   if (Array.isArray(obj)) {
+    var idx = [];
     for (var i = obj.length - 1; i >=0; i--) {
-      if (!filterJson(obj[i], keyword, filterType)) {
+      if ((isVal || (i + '').indexOf(keyword) === -1) && !filterJson(obj[i], keyword, filterType)) {
         obj.splice(i, 1);
+      } else {
+        idx.push(i);
       }
     }
+    obj._idx = idx.reverse();
     return obj.length;
   }
   Object.keys(obj).forEach(function(key) {
-    var isVal = filterType > 1;
     var hasKey = !isVal && key.toLowerCase().indexOf(keyword) !== -1;
     if (isKey && hasKey) {
       return true;
@@ -2440,3 +2535,58 @@ exports.filterJsonText = function(str, keyword, filterType) {
   }
   return obj;
 };
+
+
+var URL_RE = /^(?:([a-z0-9.+-]+:)?\/\/)?([^/?#]+)(\/[^?#]*)?(\?[^#]*)?(#.*)?$/i;
+var HOST_RE = /^(.+)(?::(\d*))$/;
+var BRACKET_RE = /^\[|\]$/g;
+
+exports.parseUrl = function (url) {
+  if (!URL_RE.test(url)) {
+    return;
+  }
+  var protocol = RegExp.$1 || 'http:';
+  var host = RegExp.$2;
+  var pathname = RegExp.$3 || '/';
+  var search = RegExp.$4;
+  var hash = RegExp.$5 || null;
+  var port = null;
+  var hostname = host;
+  if (HOST_RE.test(host)) {
+    hostname = RegExp.$1;
+    port = RegExp.$2;
+  }
+
+  return {
+    protocol: protocol,
+    slashes: true,
+    auth: null,
+    host: host,
+    port: port,
+    hostname: hostname.replace(BRACKET_RE, ''),
+    hash: hash,
+    search: search || null,
+    query: search ? search.substring(1) : null,
+    pathname: pathname,
+    path: pathname + search,
+    href: url
+  };
+};
+
+exports.replacQuery = function(url, query) {
+  var index = url.indexOf('#');
+  var hash = '';
+  if (index !== -1) {
+    hash = url.substring(index);
+    url = url.substring(0, index);
+  }
+  if (query) {
+    query = '?' + query;
+  }
+  index = url.indexOf('?');
+  if (index !== -1) {
+    url = url.substring(0, index);
+  }
+  return url + query + hash;
+};
+

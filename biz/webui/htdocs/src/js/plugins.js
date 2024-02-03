@@ -150,7 +150,14 @@ var Home = React.createClass({
     }, handlePlugins);
   },
   onOpen: function (e) {
-    this.props.onOpen && this.props.onOpen(e);
+    var name = e.target.getAttribute('data-name');
+    var data = this.props.data;
+    var plugin = data && data.plugins && data.plugins[name + ':'] || {};
+    if (plugin.openInModal) {
+      events.trigger('showPluginOption', plugin);
+    } else {
+      this.props.onOpen && this.props.onOpen(e);
+    }
     e.preventDefault();
   },
   syncData: function (plugin) {
@@ -174,12 +181,7 @@ var Home = React.createClass({
     );
   },
   onCmdChange: function (e) {
-    var msg = e.target.value;
-    if (this.state.install) {
-      this.setState({ installMsg: msg });
-    } else {
-      this.setState({ cmdMsg: msg });
-    }
+    this.updateCmdMsg(e.target.value);
   },
   showMsgDialog: function () {
     var self = this;
@@ -190,8 +192,35 @@ var Home = React.createClass({
       }, 600);
     }
   },
+  updateCmdMsg: function(msg, cb) {
+    if (this.state.install) {
+      this.setState({ installMsg: msg }, cb);
+    } else {
+      this.setState({ cmdMsg: msg }, cb);
+    }
+  },
   onRegistry: function(e) {
     var registry = e.target.value;
+    if (registry === '+Add') {
+      var textarea = ReactDOM.findDOMNode(this.refs.textarea);
+      var pkgs = [];
+      var regs = [];
+      var regCmdName = '--registry=';
+      textarea.value.trim().split(/\s+/).forEach(function(cmd) {
+        if (cmd.indexOf(regCmdName)) {
+          pkgs.push(cmd);
+        } else {
+          regs.push(cmd);
+        }
+      });
+      if (!regs.length) {
+        regs.push(regCmdName);
+      }
+      this.updateCmdMsg(pkgs.concat(regs).join(' '), function() {
+        textarea.focus();
+      });
+      return;
+    }
     this.setState({ registry: registry });
     storage.set('pluginsRegistry', registry);
   },
@@ -234,7 +263,7 @@ var Home = React.createClass({
     var registryList = null;
     var registryCmd = registry ? ' --registry=' + registry : '';
     if (dataCenter.enablePluginMgr) {
-      const cmd = plugin.moduleName;
+      var cmd = plugin.moduleName;
       win.confirm('Are you sure to uninstall plugin \'' + cmd + '\'.', function(ok) {
         if (ok) {
           dataCenter.plugins.uninstallPlugins({ cmd: cmd }, handlePlugins);
@@ -286,6 +315,7 @@ var Home = React.createClass({
     var state = self.state || {};
     var plugin = state.plugin || {};
     var install = state.install;
+    var epm = dataCenter.enablePluginMgr;
     var cmdMsg = install ? state.installMsg : state.cmdMsg;
     var list = Object.keys(plugins);
     var disabledPlugins = data.disabledPlugins || {};
@@ -295,11 +325,12 @@ var Home = React.createClass({
     var ndp = data.ndp;
     self.hasNewPlugin = false;
 
-    if (!install && cmdMsg && registry) {
+    if (!epm && cmdMsg && registry) {
+      var regCmd = ' --registry=' + registry;
       cmdMsg = cmdMsg.split('\n').map(function(line) {
         line = line.trim();
         if (line) {
-          line += ' --registry=' + registry;
+          line += regCmd;
         }
         return line;
       }).join('\n');
@@ -333,9 +364,10 @@ var Home = React.createClass({
                   var plugin = plugins[name];
                   name = name.slice(0, -1);
                   var checked = !disabledPlugins[name];
-                  var openOutside =
-                    plugin.pluginHomepage && !plugin.openInPlugins;
+                  var openInModal = plugin.openInModal;
+                  var openExternal = (plugin.pluginHomepage || plugin.openExternal) && !plugin.openInPlugins && !openInModal;
                   var url = plugin.pluginHomepage || 'plugin.' + name + '/';
+                  var homepage = plugin.homepage;
                   var hasNew = util.compareVersion(
                     plugin.latest,
                     plugin.version
@@ -383,27 +415,27 @@ var Home = React.createClass({
                       </td>
                       <td className="w-plugins-name" title={plugin.moduleName}>
                       {plugin.noOpt ? <span>{name}</span> : <a
-                          href={url}
+                          href={openInModal ? null : url}
                           target="_blank"
                           data-name={name}
-                          onClick={openOutside ? null : self.onOpen}
+                          onClick={openExternal ? null : self.onOpen}
                         >
                           {name}
                         </a>}
                       </td>
                       <td className="w-plugins-version">
-                        {plugin.homepage ? (
-                          <a href={plugin.homepage} target="_blank">
+                        {homepage ? (
+                          <a href={homepage} target="_blank">
                             {plugin.version}
                           </a>
                         ) : (
                           plugin.version
                         )}
                         {hasNew ? (
-                          plugin.homepage ? (
+                          homepage ? (
                             <a
                               className="w-new-version"
-                              href={plugin.homepage}
+                              href={homepage}
                               target="_blank"
                             >
                               {hasNew}
@@ -415,11 +447,11 @@ var Home = React.createClass({
                       </td>
                       <td className="w-plugins-operation">
                         {plugin.noOpt ? <span className="disabled">Option</span> : <a
-                          href={url}
+                          href={openInModal ? null : url}
                           target="_blank"
                           data-name={name}
                           className="w-plugin-btn"
-                          onClick={openOutside ? null : self.onOpen}
+                          onClick={openExternal ? null : self.onOpen}
                         >
                           Option
                         </a>}
@@ -458,9 +490,9 @@ var Home = React.createClass({
                             Uninstall
                           </a>
                         )}
-                        {plugin.homepage ? (
+                        {homepage ? (
                           <a
-                            href={plugin.homepage}
+                            href={homepage}
                             className="w-plugin-btn"
                             target="_blank"
                           >
@@ -559,7 +591,7 @@ var Home = React.createClass({
             <textarea
               ref="textarea"
               value={cmdMsg || ''}
-              readOnly={!install}
+              readOnly={!epm}
               placeholder={install ? 'Such as: whistle.inspect whistle.abc@1.0.0 @org/whistle.xxx' : undefined}
               className={'w-plugin-update-cmd' + (install ? ' w-plugin-install' : '')}
               maxLength={install ? 360 : undefined}
@@ -585,7 +617,7 @@ var Home = React.createClass({
             </div>
           </div>
           <div className="modal-footer">
-            {registryList.length ?<label className="w-registry-list">
+            {registryList.length ? <label className="w-registry-list">
               <strong>--registry=</strong>
               <select className="form-control" value={registry} onChange={this.onRegistry}>
                 <option value="">None</option>
@@ -596,8 +628,15 @@ var Home = React.createClass({
                     );
                   })
                 }
+                {epm ? <option value="+Add">+Add</option> : null}
               </select>
-            </label> : null}
+            </label> : (epm ? <label className="w-registry-list">
+              <strong>--registry=</strong>
+              <select className="form-control" value={registry} onChange={this.onRegistry}>
+                <option value="">None</option>
+                <option value="+Add">+Add</option>
+              </select>
+            </label> : null)}
             <button
               type="button"
               className="btn btn-primary w-copy-text-with-tips"
@@ -665,9 +704,7 @@ var Tabs = React.createClass({
     var props = self.props;
     var tabs = props.tabs || [];
     var activeName = 'Home';
-    var disabledPlugins = props.disabledPlugins || {};
     var disabled = props.disabledAllPlugins;
-    var ndp = props.ndp;
     var active = self.props.active;
     if (active && active != activeName) {
       for (var i = 0, len = tabs.length; i < len; i++) {
@@ -709,7 +746,7 @@ var Tabs = React.createClass({
             </a>
           </li>
           {tabs.map(function (tab) {
-            var disd = !ndp && (disabled || disabledPlugins[tab.name]);
+            var disd = util.pluginIsDisabled(props, tab.name);
             return (
               <li className={activeName == tab.name ? ' active' : ''}>
                 <a

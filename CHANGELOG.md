@@ -1,4 +1,65 @@
-# v2.9.52
+# v2.9.64
+1. feat: Mock 功能支持对临时文件添加注释
+2. feat: 优化 Rules & Values 的拖拽功能
+3. fix: https://github.com/avwo/whistle/issues/1040
+
+# v2.9.63
+1. feat: 支持 Cookie 的 `Partitioned` 属性（该属性需要跟 `Secure`、`SameSite=None` 一起使用）
+2. feat: Composer 添加 `CopyAsCURL` 按钮
+3. feat: Composer 添加 `ProxyRules` 选项，去选后可以禁用 Proxy (Whistle) 设置的所有规则（Proxy 里面的规则优先级高于 Composer Rules）
+
+# v2.9.62
+1. chore: 更新 CodeMirror 版本
+2. feat: Network Settings 支持导入导出
+3. feat: Rules & Values 支持通过 `b:keyword` 搜索内容
+4. feat: Composer 支持导入导出
+5. feat: 插件 Option 支持设置 `openInModal` 以对话框形式打开
+6. feat: Network 列表新增 `Back to the bottom` 按钮
+
+# v2.9.61
+1. fix: 在新版本 Node 可能存在 [pipe](https://wproxy.org/whistle/rules/pipe.html) 功能失效问题
+2. fix: https://github.com/avwo/whistle/issues/1017
+
+# v2.9.60
+1. fix: https://github.com/avwo/whistle/issues/1012
+
+# v2.9.59
+1. feat: 支持 https://github.com/avwo/whistle/issues/978
+2. feat: 客户端支持直接使用 WebView 预览抓包内容
+
+
+# v2.9.58
+1. feat: Network 右键菜单 Mock > Export，通过插件或拖拽导入 Mock 数据
+2. feat: 插件支持 `window.whistleBridge.download({name, value[, base64]})` 下载指定数据
+3. feat: 新增特殊路径 `/_WHISTLE_5b6af7b9884e1165_/`，Whistle 会自动将url 里面第一个此路径片段替换成 `/`
+
+# v2.9.57
+1. feat: Composer 添加修改请求参数按钮 `Params`
+2. feat: Composer 面板优化
+3. feat: Composer 添加 Cookies 按钮方便获取当前抓包记录里面对应域名的 Cookie
+4. feat: 支持通过启动参数 `uiExt` 往页面注入 js 或 html （把 Whistle 作为第三方 npm 包使用时可用）
+	``` js
+	uiExt?: {
+    required?: boolean;
+    htmlPrepend?: string;
+    htmlAppend?: string;
+    jsPrepend?: string;
+    jsAppend?: string;
+  };
+	```
+
+# v2.9.56
+1. feat: 支持通过 `Online / IPv6-only network` 强制 dns 获取 ipv6（命令行版本还可以通过 `-M ipv6Only` 开启）
+2. feat: `w2 add` 命令支持 `type: module`
+# v2.9.55
+1. feat: 显示 `captureError`，且可以通过插件获取到这类型错误的抓包数据
+2. fix: 完善 `refreshPlugins` 方法（内部方法）
+
+# v2.9.54
+1. fix: 修复 Dark Mode 模式下图片显示问题
+2. fix: JSON 过滤搜索时保留数组的 index
+
+# v2.9.53
 1. feat: 支持通过 `enable://forHttp|forHttps` 设置 `enable://capture` 只对 http 或 https 生效
 2. feat: 支持通过请求参数设置登录态
 3. feat: 支持 `Dark Mode`，且可以通过界面 `Online -> 打开对话框 -> Disable dark mode` 关闭自动切换 `Dark Mode`
