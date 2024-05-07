@@ -22,7 +22,7 @@ var storage = require('./storage');
 var Dialog = require('./dialog');
 var ListDialog = require('./list-dialog');
 var FilterBtn = require('./filter-btn');
-// var FilesDialog = require('./files-dialog');
+var EditorDialog = require('./editor-dialog');
 var message = require('./message');
 var UpdateAllBtn = require('./update-all-btn');
 var ContextMenu = require('./context-menu');
@@ -36,6 +36,7 @@ var MockDialog = require('./mock-dialog');
 var IframeDialog = require('./iframe-dialog');
 var win = require('./win');
 
+var TEMP_LINK_RE = /^(?:[\w-]+:\/\/)?temp\/([\da-z]{64}|blank)(?:\.[\w-]+)?$/;
 var H2_RE = /http\/2\.0/i;
 var JSON_RE = /^\s*(?:[\{｛][\w\W]+[\}｝]|\[[\w\W]+\])\s*$/;
 var DEFAULT = 'Default';
@@ -57,6 +58,23 @@ var search = window.location.search;
 var isClient = util.getQuery().mode === 'client';
 var hideLeftMenu;
 var showTreeView;
+var dataUrl;
+
+function isUrl(url) {
+  return /^https?:\/\/[^/]/i.test(url);
+}
+
+window.setWhistleDataUrl = function(url) {
+  if (isUrl(url)) {
+    if (dataCenter.handleDataUrl) {
+      dataCenter.handleDataUrl(url);
+    } else {
+      dataUrl = url;
+    }
+    return true;
+  }
+  return false;
+};
 
 if (/[&#?]showTreeView=(0|false|1|true)(?:&|$|#)/.test(search)) {
   showTreeView = RegExp.$1 === '1' || RegExp.$1 === 'true';
@@ -67,6 +85,21 @@ if (/[&#?]hideLeft(?:Bar|Menu)=(0|false|1|true)(?:&|$|#)/.test(search)) {
 } else if (/[&#?]showLeft(?:Bar|Menu)=(0|false|1|true)(?:&|$|#)/.test(search)) {
   hideLeftMenu = RegExp.$1 === '0' || RegExp.$1 === 'false';
 }
+
+var TOP_BAR_MENUS = [
+  {
+    name: 'Scroll To Top',
+    action: 'top'
+  },
+  {
+    name: 'Scroll To Selected',
+    action: 'selected'
+  },
+  {
+    name: 'Scroll To Bottom',
+    action: 'bottom'
+  }
+];
 
 var LEFT_BAR_MENUS = [
   {
@@ -190,15 +223,16 @@ function checkUrl(url) {
     message.error('The url cannot be empty.');
     return;
   }
-  if (!/^https?:\/\/[^/]/i.test(url)) {
+  if (!isUrl(url)) {
     message.error('Please input the correct url.');
     return;
   }
   return url;
 }
 
-function getRemoteDataHandler(callback) {
-  return function (data, xhr) {
+function getRemoteData(url, callback) {
+  var opts = {  url: url };
+  dataCenter.importRemote(opts,  function (data, xhr) {
     if (!data) {
       util.showSystemError(xhr);
       return callback(true);
@@ -218,7 +252,7 @@ function getRemoteDataHandler(callback) {
       message.error(e.message);
     }
     callback(true);
-  };
+  });
 }
 
 function readFileJson(file, cb) {
@@ -851,6 +885,14 @@ var Index = React.createClass({
       }
     });
 
+    events.on('showPluginOptionTab', function(_, plugin) {
+      plugin && self.showPluginTab(util.getSimplePluginName(plugin));
+    });
+
+    events.on('disablePlugin', function(_, plugin, disabled) {
+      self.setPluginState(util.getSimplePluginName(plugin), disabled);
+    });
+
     events.on('setComposerData', function(_, data) {
       if (!data || self.state.rulesMode) {
         return;
@@ -870,7 +912,7 @@ var Index = React.createClass({
       if (!plugin) {
         return;
       }
-      var name = plugin.moduleName.substring(plugin.moduleName.lastIndexOf('.') + 1);
+      var name = util.getSimplePluginName(plugin);
       var url =  plugin.pluginHomepage || 'plugin.' + name + '/';
       if ((plugin.pluginHomepage || plugin.openExternal) && !plugin.openInPlugins && !plugin.openInModal) {
         return window.open(url);
@@ -992,16 +1034,22 @@ var Index = React.createClass({
       modal.setChanged(filename, false);
       self.setRulesActive(filename);
       self.setState({ activeRules: item });
-      self.triggerRulesChange('create');
+      if (!data.update) {
+        self.triggerRulesChange('create');
+      }
     });
     events.on('addNewValuesFile', function(_, data) {
       var filename = data.filename;
       var modal = self.state.values;
       var item = modal.add(filename, data.data);
       modal.setChanged(filename, false);
-      self.setValuesActive(filename);
-      self.setState({ activeValues: item });
-      self.triggerValuesChange('create');
+      if (data.update) {
+        self.setState({});
+      } else {
+        self.setValuesActive(filename);
+        self.setState({ activeValues: item });
+        self.triggerValuesChange('create');
+      }
     });
 
     events.on('recoverRules', function (_, data) {
@@ -1116,9 +1164,12 @@ var Index = React.createClass({
           data = new FormData();
           data.append('importSessions', files[0]);
           self.uploadSessionsForm(data);
+          if (!/\.(txt|json)$/i.test(file && file.name)) {
+            return;
+          }
         }
-        const overLeftBar = target.closest('.w-divider-left').length;
-        const overPlugins = name === 'plugins';
+        var overLeftBar = target.closest('.w-divider-left').length;
+        var overPlugins = name === 'plugins';
         if ((!overLeftBar && !overPlugins) || self.isHideRules()) {
           return;
         }
@@ -1249,11 +1300,13 @@ var Index = React.createClass({
           return;
         }
         var elem = $(this);
+        var text;
         if (
           elem.hasClass('cm-js-http-url') ||
           elem.hasClass('cm-string') ||
           elem.hasClass('cm-js-at') ||
-          getKey(elem.text())
+          TEMP_LINK_RE.test(text = elem.text()) ||
+          getKey(text)
         ) {
           elem.addClass('w-is-link');
         }
@@ -1286,10 +1339,19 @@ var Index = React.createClass({
           window.open(text);
           return;
         }
-        var name = getKey(text);
-        if (name) {
-          self.showAndActiveValues({ name: name });
-          return;
+        if (TEMP_LINK_RE.test(text)) {
+          var tempFile = RegExp.$1;
+          return events.trigger('showEditorDialog', [{
+            ruleName: self.getActiveRuleName(),
+            tempFile: tempFile
+          }, elem]);
+        } else {
+          var name = getKey(text);
+          if (name) {
+            return events.trigger('showEditorDialog', {
+              name: name
+            });
+          }
         }
       });
 
@@ -1601,6 +1663,9 @@ var Index = React.createClass({
         });
       }
     } catch (e) {}
+    self.handleDataUrl(dataUrl || util.getDataUrl());
+    dataCenter.handleDataUrl = self.handleDataUrl;
+    dataUrl = null;
   },
   shouldComponentUpdate: function (_, nextSate) {
     var name = this.state.name;
@@ -1608,6 +1673,17 @@ var Index = React.createClass({
       this._isAtBottom = this.scrollerAtBottom && this.scrollerAtBottom();
     }
     return true;
+  },
+  handleDataUrl: function(url) {
+    if (!isUrl(url)) {
+      return;
+    }
+    var self = this;
+    getRemoteData(url, function(err, data) {
+      if (!err) {
+        self.importAnySessions(data);
+      }
+    });
   },
   importAnySessions: function (data) {
     if (data && !util.handleImportData(data)) {
@@ -1968,16 +2044,13 @@ var Index = React.createClass({
     }
     var self = this;
     self.setState({ pendingSessions: true });
-    dataCenter.importRemote(
-      { url: url },
-      getRemoteDataHandler(function (err, data) {
-        self.setState({ pendingSessions: false });
-        if (!err) {
-          byInput && self.refs.importRemoteSessions.hide();
-          self.importAnySessions(data);
-        }
-      })
-    );
+    getRemoteData(url, function (err, data) {
+      self.setState({ pendingSessions: false });
+      if (!err) {
+        byInput && self.refs.importRemoteSessions.hide();
+        self.importAnySessions(data);
+      }
+    });
   },
   importRemoteSessions: function (e) {
     if (e && e.type !== 'click' && e.keyCode !== 13) {
@@ -2013,19 +2086,16 @@ var Index = React.createClass({
       return;
     }
     self.setState({ pendingRules: true });
-    dataCenter.importRemote(
-      { url: url },
-      getRemoteDataHandler(function (err, data) {
-        self.setState({ pendingRules: false });
-        if (err) {
-          return;
-        }
-        self.refs.importRemoteRules.hide();
-        if (data && !util.handleImportData(data)) {
-          self.handleImportRules(data);
-        }
-      })
-    );
+    getRemoteData(url, function (err, data) {
+      self.setState({ pendingRules: false });
+      if (err) {
+        return;
+      }
+      self.refs.importRemoteRules.hide();
+      if (data && !util.handleImportData(data)) {
+        self.handleImportRules(data);
+      }
+    });
   },
   importValues: function (e, data) {
     var self = this;
@@ -2052,19 +2122,16 @@ var Index = React.createClass({
       return;
     }
     self.setState({ pendingValues: true });
-    dataCenter.importRemote(
-      { url: url },
-      getRemoteDataHandler(function (err, data) {
-        self.setState({ pendingValues: false });
-        if (err) {
-          return;
-        }
-        self.refs.importRemoteValues.hide();
-        if (data && !util.handleImportData(data)) {
-          self.handleImportValues(data);
-        }
-      })
-    );
+    getRemoteData(url, function (err, data) {
+      self.setState({ pendingValues: false });
+      if (err) {
+        return;
+      }
+      self.refs.importRemoteValues.hide();
+      if (data && !util.handleImportData(data)) {
+        self.handleImportValues(data);
+      }
+    });
   },
   _uploadRules: function (data, showResult) {
     var self = this;
@@ -2811,6 +2878,11 @@ var Index = React.createClass({
       }
     );
   },
+  getActiveRuleName: function() {
+    var modal = this.state.rules;
+    var activeItem = modal.getActive();
+    return activeItem ? activeItem.name : '';
+  },
   showAnonymousWeinre: function () {
     this.openWeinre();
   },
@@ -3287,20 +3359,20 @@ var Index = React.createClass({
     );
     e && e.preventDefault();
   },
-  disablePlugin: function (e) {
+  setPluginState: function(name, disabled) {
     var self = this;
-    var target = e.target;
     if (self.state.ndp) {
       return message.warn('Not allowed disable plugins.');
     }
     dataCenter.plugins.disablePlugin(
       {
-        name: $(target).attr('data-name'),
-        disabled: target.checked ? 0 : 1
+        name: name,
+        disabled: disabled ? 1 : 0
       },
       function (data, xhr) {
         if (data && data.ec === 0) {
           self.state.disabledPlugins = data.data;
+          dataCenter.setDisabledPlugins(data.data);
           protocols.setPlugins(self.state);
           self.setState({});
         } else {
@@ -3308,6 +3380,10 @@ var Index = React.createClass({
         }
       }
     );
+  },
+  disablePlugin: function (e) {
+    var target = e.target;
+    this.setPluginState($(target).attr('data-name'), !target.checked);
   },
   abort: function (list) {
     if (!Array.isArray(list)) {
@@ -3609,6 +3685,15 @@ var Index = React.createClass({
       self.refs.certsInfoDialog.show(data.certs, data.dir);
     });
   },
+  onTopContextMenu: function(e) {
+    if (this.getTabName() !== 'network') {
+      return;
+    }
+    e.preventDefault();
+    var data = util.getMenuPosition(e, 110, 100);
+    data.list = TOP_BAR_MENUS;
+    this.refs.topContextMenu.show(data);
+  },
   onContextMenu: function (e) {
     var count = 0;
     var list = LEFT_BAR_MENUS;
@@ -3645,6 +3730,23 @@ var Index = React.createClass({
     }
     e.preventDefault();
   },
+  onClickTopMenu: function(action) {
+    switch(action) {
+    case 'top':
+      if (this.container) {
+        this.container[0].scrollTop = 0;
+      }
+      break;
+    case 'selected':
+      events.trigger('ensureSelectedItemVisible');
+      break;
+    case 'bottom':
+      if (this.container) {
+        this.container[0].scrollTop = 10000000;
+      }
+      break;
+    }
+  },
   onClickContextMenu: function (action) {
     var self = this;
     var state = self.state;
@@ -3652,7 +3754,7 @@ var Index = React.createClass({
     switch (action) {
     case 'Tree View':
       list[2].checked = !state.network.isTreeView;
-      self.toggleTreeView();
+      setTimeout(self.toggleTreeView, 0);
       break;
     case 'Rules':
       self.disableAllRules(null, function (disabled) {
@@ -3908,7 +4010,7 @@ var Index = React.createClass({
           + (rulesOnlyMode || rulesMode ? ' w-show-rules-mode' : '')
         }
       >
-        <div className={'w-menu w-' + name + '-menu-list'}>
+        <div className={'w-menu w-' + name + '-menu-list'} onContextMenu={this.onTopContextMenu}>
           <a
             onClick={this.toggleLeftMenu}
             draggable="false"
@@ -4447,6 +4549,7 @@ var Index = React.createClass({
         </div>
         <div className="w-container box fill">
           <ContextMenu onClick={this.onClickContextMenu} ref="contextMenu" />
+          <ContextMenu onClick={this.onClickTopMenu} ref="topContextMenu" />
           <div
             onContextMenu={this.onContextMenu}
             onDoubleClick={this.onContextMenu}
@@ -5184,6 +5287,7 @@ var Index = React.createClass({
           <input ref="content" name="content" type="hidden" />
         </form>
         <IframeDialog ref="iframeDialog" />
+        <EditorDialog textEditor />
       </div>
     );
   }

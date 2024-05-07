@@ -54,6 +54,18 @@ proto.hasChanged = function () {
   });
 };
 
+proto.getGroupName = function(name) {
+  var i = this.list.indexOf(name);
+  if (i !== -1) {
+    for (; i >=0; i--) {
+      name = this.list[i];
+      if (util.isGroup(name)) {
+        return name;
+      }
+    }
+  }
+};
+
 proto._setBoolProp = function (name, prop, bool) {
   var item = this.get(name);
   if (item) {
@@ -179,12 +191,12 @@ proto.moveTo = function (fromName, toName, group, toTop) {
       list.splice(fromIndex, len);
       children.unshift(toIndex, 0);
       list.splice.apply(list, children);
-    } else if (toTop || util.isGroup(fromName) || !util.isGroup(toName)) {
+    } else if (toTop || util.isGroup(fromName) || !util.isGroup(toName) || this.getGroupName(fromName) === toName) {
       list.splice(fromIndex, 1);
       list.splice(toIndex, 0, fromName);
     } else {
       list.splice(fromIndex, 1);
-      list.splice(fromIndex > toIndex + 1 ? toIndex + 1 : toIndex, 0, fromName);
+      list.splice(fromIndex > toIndex ? toIndex + 1 : toIndex, 0, fromName);
     }
     return true;
   }
@@ -396,7 +408,7 @@ proto.search = function (keyword, disabledType) {
   } else {
     this._type = ''; // reset
   }
-  this._keyword = keyword.toLowerCase();
+  this._keyword = keyword && (util.toRegExp(keyword) || keyword.toLowerCase());
   this.filter();
   return !keyword;
 };
@@ -416,9 +428,9 @@ proto.filter = function () {
       return;
     }
     if (filterBody) {
-      item.hide = !item.value || item.value.toLowerCase().indexOf(keyword) == -1;
+      item.hide = !item.value || util.checkKey(item.value, item.value.toLowerCase(), keyword);
     } else {
-      item.hide = !name || name.toLowerCase().indexOf(keyword) == -1;
+      item.hide = !name || util.checkKey(name, name.toLowerCase(), keyword);
     }
   });
   return list;
