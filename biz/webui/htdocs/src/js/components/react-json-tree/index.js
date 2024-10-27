@@ -190,13 +190,39 @@ var JSONTree = (function (_React$Component) {
       { name: 'Copy Value' },
       { name: 'Collapse Parent' }
     ];
-
+    var expandMenu;
+    var collapseMenu;
+    var searchMenu;
     if (props.expandAll) {
-      contextMenuList.push({ name: 'Expand All' });
+      expandMenu = {
+        name: 'Expand All',
+        onClick: function() {
+          props.expandAll();
+        }
+      };
+      contextMenuList.push(expandMenu);
     }
     if (props.collapseAll) {
-      contextMenuList.push({ name: 'Collapse All' });
+      collapseMenu = {
+        name: 'Collapse All',
+        onClick: function() {
+          props.collapseAll();
+        }
+      };
+      contextMenuList.push(collapseMenu);
     }
+    if (props.onSearch) {
+      searchMenu = {
+        name: 'Search Object',
+        onClick: function () {
+          props.onSearch();
+        }
+      };
+      contextMenuList.push(searchMenu);
+    }
+
+    var inspectMenu = { name: 'Inspect Value' };
+    contextMenuList.push(inspectMenu);
 
     var _this = (0, _possibleConstructorReturn3['default'])(
       this,
@@ -205,30 +231,41 @@ var JSONTree = (function (_React$Component) {
 
     _this.onContextMenu = function (e) {
       var target = (0, _contextMenu.$)(e.target);
-      var label = target.closest('label');
+      var label = target.closest('li').find('>label[data-key-path]:first');
       var keyPath = _contextMenu.util.parseJSON(label.attr('data-key-path'));
       if (!Array.isArray(keyPath)) {
-        if (e.target.nodeName === 'SPAN' && !target.find('span').length && e.target.parentNode.nodeName !== 'SPAN') {
-          e.stopPropagation();
-        }
         return;
       }
       var data = _this.props.data;
+      var keyPathLen = keyPath.length;
+      var showInspect = keyPathLen >= 2 || props.onSearch;
       if (data) {
-        for (var i = keyPath.length - 2; i >= 0; i--) {
+        for (var i = keyPathLen - 2; i >= 0; i--) {
           data = data && data[keyPath[i]];
         }
       }
-      var expandMenu = contextMenuList[3];
-      var collapseMenu = contextMenuList[4];
+
       var height = isRoot ? 60 : 90;
+      if (props.onSearch && !searchMenu) {
+        searchMenu = expandMenu;
+        expandMenu = null;
+      }
       if (expandMenu) {
         height += 30;
       }
       if (collapseMenu) {
         height += 30;
       }
-      var isRoot = keyPath.length === 1;
+      if (searchMenu) {
+        height += 30;
+      }
+      var json = data && showInspect && (typeof data === 'object' ? data : _contextMenu.util.parseJSON(data));
+      inspectMenu.hide = !json;
+      inspectMenu.onClick = json ? function() {
+        _contextMenu.util.showJSONDialog(json, [keyPath[0]]);
+      } : null;
+      height += json ? 30 : 0;
+      var isRoot = keyPathLen === 1;
       var ctxMenu = _contextMenu.util.getMenuPosition(e, 110, height);
       ctxMenu.list = contextMenuList;
       ctxMenu.className = 'w-inspectors-ctx-menu';
@@ -249,16 +286,6 @@ var JSONTree = (function (_React$Component) {
         label.closest('li').parent().closest('li').find('div:first').click();
       };
       contextMenuList[2].hide = isRoot;
-      if (expandMenu) {
-        expandMenu.onClick = function () {
-          props.expandAll();
-        };
-      }
-      if (collapseMenu) {
-        collapseMenu.onClick = function () {
-          props.collapseAll();
-        };
-      }
       _this.refs.contextMenu.show(ctxMenu); // eslint-disable-line
       e.preventDefault();
       e.stopPropagation();

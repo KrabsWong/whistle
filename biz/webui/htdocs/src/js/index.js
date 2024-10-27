@@ -55,7 +55,9 @@ var OPTIONS_WITH_SELECTED = [
 ];
 var HIDE_STYLE = { display: 'none' };
 var search = window.location.search;
-var isClient = util.getQuery().mode === 'client';
+var query = util.getQuery();
+var isClient = query.mode === 'client';
+var hideMenus = !!(query.hideMenus || query.hideMenu);
 var hideLeftMenu;
 var showTreeView;
 var dataUrl;
@@ -364,6 +366,59 @@ function getValue(url) {
   return false;
 }
 
+function appendList(list, _list) {
+  if (!_list.length) {
+    return;
+  }
+  for (var i = 0, len = list.length; i < len; i++) {
+    if (util.isGroup(list[i])) {
+      _list.unshift(i, 0);
+      list.splice.apply(list, _list);
+      return;
+    }
+  }
+  list.push.apply(list, _list);
+}
+
+function updateData(list, data, modal) {
+  var changedList = modal.getChangedList();
+  if (!changedList.length) {
+    return;
+  }
+  var hasChanged;
+  var _list = [];
+  var activeItem;
+  changedList.forEach(function(item) {
+    var name = item.name;
+    var curItem = data[name];
+    if (!curItem) {
+      data[name] = item;
+      _list.push(name);
+      if (item.active) {
+        activeItem = item;
+      }
+    } else if (curItem.value != item.value) {
+      hasChanged = true;
+      data[name] = item;
+    }
+  });
+  appendList(list, _list);
+  if (activeItem) {
+    list.forEach(function(name) {
+      data[name].active = false;
+    });
+    activeItem.active = true;
+  }
+  return hasChanged;
+}
+
+function getCAType(type) {
+  if (type === 'crt' || type === 'pem') {
+    return type;
+  }
+  return 'cer';
+}
+
 var Index = React.createClass({
   getInitialState: function () {
     var self = this;
@@ -372,14 +427,10 @@ var Index = React.createClass({
     var values = modal.values;
     var server = modal.server;
     var multiEnv = !!server.multiEnv;
-    var caType = storage.get('caType');
-    if (caType !== 'cer' && caType !== 'pem') {
-      caType = 'crt';
-    }
     var state = {
       replayCount: 1,
       tabs: [],
-      caType: caType,
+      caType: getCAType(storage.get('caType')),
       allowMultipleChoice: modal.rules.allowMultipleChoice,
       backRulesFirst: modal.rules.backRulesFirst,
       networkMode: !!server.networkMode,
@@ -736,7 +787,7 @@ var Index = React.createClass({
       });
     return pluginsOptions;
   },
-  reloadRules: function (data) {
+  reloadRules: function (data, quite) {
     var self = this;
     var selectedName = storage.get('activeRules', true) || data.current;
     var rulesList = [];
@@ -759,10 +810,12 @@ var Index = React.createClass({
         active: selectedName === item.name
       };
     });
+    var changed = quite && updateData(rulesList, rulesData, self.state.rules);
     self.state.rules.reset(rulesList, rulesData);
     self.setState({});
+    return changed;
   },
-  reloadValues: function (data) {
+  reloadValues: function (data, quite) {
     var self = this;
     var selectedName = storage.get('activeValues', true) || data.current;
     var valuesList = [];
@@ -775,24 +828,36 @@ var Index = React.createClass({
         active: selectedName === item.name
       };
     });
+    var changed = quite && updateData(valuesList, valuesData, self.state.values);
     self.state.values.reset(valuesList, valuesData);
     self.setState({});
+    return changed;
   },
-  reloadData: function () {
+  reloadDataQuite: function() {
+    this.reloadData(true);
+  },
+  reloadData: function (quite) {
     var self = this;
     var dialog = $('.w-reload-data-tips').closest('.w-confirm-reload-dialog');
     var name = dialog.find('.w-reload-data-tips').attr('data-name');
     var isRules = name === 'rules';
+    quite = quite === true;
     var handleResponse = function (data, xhr) {
       if (!data) {
-        util.showSystemError(xhr);
-        return;
+        !quite && util.showSystemError(xhr, true);
+        return setTimeout(function() {
+          events.trigger(isRules ? 'rulesChanged' : 'valuesChanged', true);
+        }, 2000);
       }
       if (isRules) {
-        self.reloadRules(data);
+        if (self.reloadRules(data, quite)) {
+          events.trigger('rulesChanged', true);
+        }
         self.triggerRulesChange('reload');
       } else {
-        self.reloadValues(data);
+        if (self.reloadValues(data, quite)) {
+          events.trigger('valuesChanged', true);
+        }
         self.triggerValuesChange('reload');
       }
     };
@@ -804,23 +869,25 @@ var Index = React.createClass({
       events.trigger('reloadValuesRecycleBin');
     }
   },
-  showReloadRules: function () {
-    if (this.state.name === 'rules' && this.rulesChanged) {
+  showReloadRules: function (force) {
+    if (this.rulesChanged && this.state.name === 'rules') {
       this.rulesChanged = false;
       var hasChanged = this.state.rules.hasChanged();
       this.showReloadDialog(
         'The rules has been modified.<br/>Do you want to reload it.',
-        hasChanged
+        hasChanged,
+        force
       );
     }
   },
-  showReloadValues: function () {
-    if (this.state.name === 'values' && this.valuesChanged) {
+  showReloadValues: function (force) {
+    if (this.valuesChanged && this.state.name === 'values') {
       this.valuesChanged = false;
       var hasChanged = this.state.values.hasChanged();
       this.showReloadDialog(
         'The values has been modified.<br/>Do you want to reload it.',
-        hasChanged
+        hasChanged,
+        force
       );
     }
   },
@@ -828,14 +895,21 @@ var Index = React.createClass({
     this.showReloadRules();
     this.showReloadValues();
   },
-  showReloadDialog: function (msg, existsUnsaved) {
-    var confirmReload = this.refs.confirmReload;
-    confirmReload.show();
+  showReloadDialog: function (msg, existsUnsaved, force) {
+    var dialog = this.refs.confirmReload;
+    clearTimeout(this.reloadTimer);
+    var tips = $('.w-reload-data-tips');
+    tips.attr('data-name', this.state.name);
+    if (!force && !dialog.isVisible()) {
+      this.reloadTimer = setTimeout(this.reloadDataQuite, 1000);
+      return;
+    }
+    dialog.show();
     if (existsUnsaved) {
       msg +=
         '<p class="w-confim-reload-note">Note: There are unsaved changes.</p>';
     }
-    $('.w-reload-data-tips').html(msg).attr('data-name', this.state.name);
+    tips.html(msg);
   },
   showTab: function() {
     var pageName = getPageName(this.state);
@@ -945,12 +1019,12 @@ var Index = React.createClass({
     events.on('enableRecord', function () {
       self.enableRecord();
     });
-    events.on('showJsonViewDialog', function(_, data) {
-      self.refs.jsonDialog.show(data);
+    events.on('showJsonViewDialog', function(_, data, keyPath) {
+      self.refs.jsonDialog.show(data, keyPath);
     });
-    events.on('rulesChanged', function () {
+    events.on('rulesChanged', function (_, force) {
       self.rulesChanged = true;
-      self.showReloadRules();
+      self.showReloadRules(force === true);
     });
     events.on('switchTreeView', function () {
       self.toggleTreeView();
@@ -958,9 +1032,9 @@ var Index = React.createClass({
     events.on('updateGlobal', function () {
       self.setState({});
     });
-    events.on('valuesChanged', function () {
+    events.on('valuesChanged', function (_, force) {
       self.valuesChanged = true;
-      self.showReloadValues();
+      self.showReloadValues(force === true);
     });
     events.on('showNetwork', function () {
       self.showNetwork();
@@ -1188,6 +1262,9 @@ var Index = React.createClass({
         if ((e.metaKey || e.ctrlKey) && e.keyCode === 82) {
           e.preventDefault();
         }
+      })
+      .on('contextmenu', '.w-textarea-bar', function(e) {
+        e.preventDefault();
       });
     var removeItem = function (e) {
       var target = e.target;
@@ -1650,6 +1727,16 @@ var Index = React.createClass({
     try {
       var onReady = window.parent.onWhistleReady;
       if (typeof onReady === 'function') {
+        var selectItem = function(item) {
+          var modal = item && self.state.network;
+          var index = modal && modal.getList().indexOf(item);
+          if (index >= 0) {
+            events.trigger('selectedIndex', index);
+          }
+        };
+        var selectIndex = function (index) {
+          events.trigger('selectedIndex', index);
+        };
         onReady({
           url: location.href,
           pageId: dataCenter.getPageId(),
@@ -1657,8 +1744,14 @@ var Index = React.createClass({
           importSessions: self.importAnySessions,
           importHarSessions: self.importHarSessions,
           clearSessions: self.clear,
-          selectIndex: function (index) {
-            events.trigger('selectedIndex', index);
+          selectIndex: selectIndex,
+          selectItem: selectItem,
+          setActive: function(item) {
+            if (item >= 0) {
+              selectIndex(item);
+            } else {
+              selectItem(item);
+            }
           }
         });
       }
@@ -2592,8 +2685,8 @@ var Index = React.createClass({
     );
   },
   enableHttp2: function (e) {
+    var self = this;
     if (!dataCenter.supportH2) {
-      var self = this;
       win.confirm(
         'The current version of Node.js cannot support HTTP/2.\nPlease upgrade to the latest LTS version.',
         function (sure) {
@@ -2911,6 +3004,9 @@ var Index = React.createClass({
           self.state.rules.setChanged(item.name, false);
           self.setState({});
           self.triggerRulesChange('save');
+          if (data.changed) {
+            events.trigger('rulesChanged');
+          }
           if (self.state.disabledAllRules) {
             win.confirm(
               'Rules has been turn off, do you want to turn on it?',
@@ -3184,6 +3280,10 @@ var Index = React.createClass({
     var isRules = state.name == 'rules';
     if (isRules) {
       list = state.rules.getChangedList();
+      var active = state.rules.getActive();
+      if (active && !active.selected && list.indexOf(active) === -1) {
+        list.push(active);
+      }
       if (list.length) {
         list.forEach(function (item) {
           self.selectRules(item);
@@ -3786,10 +3886,7 @@ var Index = React.createClass({
     }, 200);
   },
   selectCAType: function(e) {
-    var caType = e.target.value;
-    if (caType !== 'cer' && caType !== 'pem') {
-      caType = 'crt';
-    }
+    var caType = getCAType(e.target.value);
     this.setState({ caType: caType });
     storage.set('caType', caType);
   },
@@ -3988,17 +4085,17 @@ var Index = React.createClass({
     LEFT_BAR_MENUS[4].hide = rulesOnlyMode;
 
     var caType = state.caType || 'crt';
-    var qrCode = 'img/qrcode.png';
+    var qrCode = 'img/qrcode-' + caType + '.png';
     var caUrl = 'cgi-bin/rootca';
     var caShortUrl = 'http://rootca.pro/';
 
-    if (caType !== 'crt') {
-      qrCode = 'img/qrcode-' + caType + '.png';
+    if (caType !== 'cer') {
       caUrl += '?type=' + caType;
       caShortUrl += caType;
     }
     var hideEditor = this.isHideRules();
     var hideEditorStyle = hideEditor ? HIDE_STYLE : null;
+    var hideStyle = hideMenus ? ' hide' : '';
     dataCenter.hideMockMenu = hideEditor;
 
     return (
@@ -4010,7 +4107,7 @@ var Index = React.createClass({
           + (rulesOnlyMode || rulesMode ? ' w-show-rules-mode' : '')
         }
       >
-        <div className={'w-menu w-' + name + '-menu-list'} onContextMenu={this.onTopContextMenu}>
+        <div className={'w-menu w-' + name + '-menu-list' + hideStyle} onContextMenu={this.onTopContextMenu}>
           <a
             onClick={this.toggleLeftMenu}
             draggable="false"
@@ -4225,7 +4322,7 @@ var Index = React.createClass({
             draggable="false"
           >
             <span className="glyphicon glyphicon-download-alt" />
-            {dataCenter.enablePluginMgr ? 'Install' : 'ReinstallAll'}
+            {dataCenter.enablePluginMgr ? 'Install' : 'Commands'}
           </a>
           <RecordBtn
             ref="recordBtn"
@@ -4347,6 +4444,7 @@ var Index = React.createClass({
           <FilterBtn
             onClick={this.showSettings}
             disabledRules={isRules && disabledAllRules}
+            backRulesFirst={isRules && state.backRulesFirst}
             isNetwork={isNetwork}
             hide={isPlugins}
           />
@@ -4554,7 +4652,7 @@ var Index = React.createClass({
             onContextMenu={this.onContextMenu}
             onDoubleClick={this.onContextMenu}
             className={
-              'w-left-menu' + (forceShowLeftMenu ? ' w-hover-left-menu' : '')
+              'w-left-menu' + (forceShowLeftMenu ? ' w-hover-left-menu' : '') + hideStyle
             }
             style={(!showAccount && networkMode) || mustHideLeftMenu ? HIDE_STYLE : null}
             onMouseEnter={forceShowLeftMenu}
@@ -4719,18 +4817,6 @@ var Index = React.createClass({
                   onFontSizeChange={this.onRulesFontSizeChange}
                   onLineNumberChange={this.onRulesLineNumberChange}
                 />
-                {!state.drb && (
-                  <p className="w-editor-settings-box">
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={state.backRulesFirst}
-                        onChange={this.enableBackRulesFirst}
-                      />{' '}
-                      Back rules first
-                    </label>
-                  </p>
-                )}
                 {!state.drm && (
                   <p className="w-editor-settings-box">
                     <label style={{ color: multiEnv ? '#aaa' : undefined }}>
@@ -4741,6 +4827,18 @@ var Index = React.createClass({
                         onChange={this.allowMultipleChoice}
                       />{' '}
                       Use multiple rules
+                    </label>
+                  </p>
+                )}
+                {!state.drb && (
+                  <p className="w-editor-settings-box">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={state.backRulesFirst}
+                        onChange={this.enableBackRulesFirst}
+                      />{' '}
+                     The later rules first
                     </label>
                   </p>
                 )}
@@ -4853,7 +4951,7 @@ var Index = React.createClass({
                   href={caUrl}
                   target="downloadTargetFrame"
                 >
-                  <img src={qrCode} width="320" />
+                  <img src={qrCode} width="300" style={{margin: 10}} />
                 </a>
                 <div className="w-https-settings">
                   <p>
@@ -4869,8 +4967,11 @@ var Index = React.createClass({
                         checked={state.interceptHttpsConnects}
                         onChange={this.interceptHttpsConnects}
                         type="checkbox"
-                      />{' '}
-                      Capture TUNNEL CONNECTS
+                         className="w-va-mdl"
+                      />
+                      <span className="w-va-mdl w-mrl-5">
+                        Enable HTTPS (Capture Tunnel Connects)
+                      </span>
                     </label>
                   </p>
                   <p>
@@ -4879,8 +4980,11 @@ var Index = React.createClass({
                         checked={dataCenter.supportH2 && state.enableHttp2}
                         onChange={this.enableHttp2}
                         type="checkbox"
-                      />{' '}
+                        className="w-va-mdl"
+                      />
+                    <span className="w-va-mdl w-mrl-5">
                       Enable HTTP/2
+                    </span>
                     </label>
                   </p>
                   <a

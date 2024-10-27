@@ -137,6 +137,60 @@ exports.preventBlur = function preventDefault(e) {
   e.preventDefault();
 };
 
+function getSelectedText(x, y) {
+  try {
+    var selection = window.getSelection();
+    for (var i = 0, len = selection.rangeCount; i < len; i++) {
+      var range = selection.getRangeAt(i);
+      var pos = range.getBoundingClientRect();
+      x -= pos.x;
+      y -= pos.y;
+      if (x >= 0 && y >= 0 && x <= pos.width && y <= pos.height) {
+        return selection.toString();
+      }
+    }
+    selection.removeAllRanges();
+  } catch (e) {}
+}
+
+exports.getSelectedText = getSelectedText;
+
+var PROPS_MENUS = [
+  {
+    name: 'Copy'
+  },
+  {
+    name: 'Copy Key'
+  },
+  {
+    name: 'Copy Value'
+  }
+];
+
+exports.handlePropsContextMenu = function(e, ctxMenu, target) {
+  target = target ? $(target) : $(e.target).closest('tr');
+  if (!target.length) {
+    return;
+  }
+  var text = getSelectedText(e.clientX, e.clientY);
+  var key = target.attr('data-name');
+  var value = target.attr('data-value');
+  if (!text && !key && !value) {
+    return;
+  }
+  PROPS_MENUS[0].hide = !text;
+  PROPS_MENUS[1].hide = !key;
+  PROPS_MENUS[2].hide = !value;
+  PROPS_MENUS[0].copyText = text;
+  PROPS_MENUS[1].copyText = key;
+  PROPS_MENUS[2].copyText = value;
+  var height = 10 + (text ? 30 : 0) + (key ? 30 : 0) + (value ? 30 : 0);
+  var data = getMenuPosition(e, 110, height);
+  data.list = PROPS_MENUS;
+  e.preventDefault();
+  ctxMenu.show(data);
+};
+
 exports.getBase64FromHexText = function (str, check) {
   if (!str) {
     return '';
@@ -339,19 +393,24 @@ function getBoolean(val) {
 
 exports.getBoolean = getBoolean;
 
-exports.showSystemError = function (xhr) {
+function stopPropagation(e) {
+  e.stopPropagation();
+}
+
+exports.stopPropagation = stopPropagation;
+
+exports.showSystemError = function (xhr, useToast) {
   xhr = xhr || {};
   var status = xhr.status;
+  var showTips = useToast ? message.error : win.alert;
   if (!status) {
-    return win.alert(
-      'Please check the proxy settings or whether whistle has been started.'
-    );
+    return showTips('Please check the proxy settings or whether whistle has been started.');
   }
   var msg = STATUS_CODES[status];
   if (msg) {
-    return win.alert('[' + status + '] ' + msg + '.');
+    return showTips('[' + status + '] ' + msg + '.');
   }
-  win.alert('[' + status + '] Unknown error, try again later.');
+  showTips('[' + status + '] Unknown error, try again later.');
 };
 
 exports.getClasses = function getClasses(obj) {
@@ -594,7 +653,7 @@ function getContentEncoding(headers) {
   var encoding = toLowerCase(
     (headers && headers['content-encoding']) || headers
   );
-  return encoding === 'gzip' || encoding === 'deflate' ? encoding : null;
+  return encoding === 'gzip' || encoding === 'br' || encoding === 'deflate' ? encoding : null;
 }
 
 exports.getOriginalReqHeaders = function (item, rulesHeaders) {
@@ -1065,7 +1124,7 @@ exports.isFocusEditor = function () {
   return !activeElement.readOnly && !activeElement.disabled;
 };
 
-exports.getMenuPosition = function (e, menuWidth, menuHeight) {
+function getMenuPosition(e, menuWidth, menuHeight) {
   var left = e.pageX;
   var top = e.pageY;
   var docElem = document.documentElement;
@@ -1077,7 +1136,9 @@ exports.getMenuPosition = function (e, menuWidth, menuHeight) {
     top = Math.max(top - menuHeight, window.scrollY + 1);
   }
   return { top: top, left: left, marginRight: clientWidth - left };
-};
+}
+
+exports.getMenuPosition = getMenuPosition;
 
 function socketIsClosed(reqData) {
   if (!reqData.closed && reqData.frames) {
@@ -1442,6 +1503,10 @@ if (window.Symbol) {
   HEX_KEY = window.Symbol.for(HEX_KEY);
   JSON_KEY = window.Symbol.for(JSON_KEY);
 }
+
+exports.BODY_KEY = BODY_KEY;
+exports.HEX_KEY = HEX_KEY;
+exports.JSON_KEY = JSON_KEY;
 
 function getHexFromBase64(base64) {
   if (base64) {
@@ -1865,8 +1930,8 @@ exports.parseImportData = function (data, modal, isValues) {
   return list;
 };
 
-exports.getSize = function (size) {
-  if (size < 1024) {
+function getSize(size) {
+  if (!(size >= 1024)) {
     return size;
   }
   size = (size / 1024).toFixed(2);
@@ -1878,7 +1943,9 @@ exports.getSize = function (size) {
     return size + 'm';
   }
   return (size / 1024).toFixed(2) + 'G';
-};
+}
+
+exports.getSize = getSize;
 
 function getQps(num) {
   if (!num) {
@@ -2615,11 +2682,14 @@ exports.replacQuery = function(url, query) {
   return url + query + hash;
 };
 
+exports.getDisplaySize = function(size, unzipSize) {
+  unzipSize = size == unzipSize ? '' : getSize(unzipSize);
+  size = getSize(size);
+  return unzipSize ? size + ' / ' + unzipSize : size;
+};
 
 function formatSize(value) {
-  return value >= 1024
-    ? value + ' (' + Number(value / 1024).toFixed(2) + 'k)'
-    : value;
+  return value >= 1024 ? value + ' (' + getSize(value) + ')' : value;
 }
 
 exports.formatSize = function(size, unzipSize) {
@@ -2640,4 +2710,11 @@ exports.getDataUrl = function() {
 exports.getSimplePluginName = function(plugin) {
   var name = typeof plugin === 'string' ? plugin : plugin.moduleName;
   return name.substring(name.lastIndexOf('.') + 1);
+};
+
+exports.showJSONDialog = function(data, keyPath) {
+  var str = data && JSON.stringify(data);
+  if (str) {
+    events.trigger('showJsonViewDialog', [str, Array.isArray(keyPath) ? keyPath : null]);
+  }
 };

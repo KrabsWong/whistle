@@ -10,7 +10,7 @@ var dataCenter;
 var WIN_NAME_PRE =
   '__whistle_' + location.href.replace(/\/[^/]*([#?].*)?$/, '/') + '__';
 var KW_RE =
-  /^(e|error|style|url|u|content|c|b|body|headers|h|ip|i|status|result|s|r|method|m|mark|type|t):(.*)$/i;
+  /^(e|error|style|url|u|composer|fc|content|c|b|body|headers|h|ip|i|status|result|s|r|method|m|mark|type|t):(.*)$/i;
 var KW_LIST_RE = /([^\s]+)(?:\s+([^\s]+)(?:\s+([\S\s]+))?)?/;
 
 function NetworkModal(list) {
@@ -211,6 +211,9 @@ function checkItem(item, opts) {
     return !isError || checkData(item, opts);
   case 'style':
     return !item.style ||  checkData(item, opts);
+  case 'fc':
+  case 'composer':
+    return !item.fc || checkData(item, opts);
   default:
     return checkData(item, opts);
   }
@@ -273,8 +276,16 @@ proto.filter = function () {
     self._list = self.list.slice().sort(function (prev, next) {
       for (var i = 0; i < len; i++) {
         var column = columns[i];
-        var prevVal = util.getCellValue(prev, column);
-        var nextVal = util.getCellValue(next, column);
+        var isBody = column.name === 'body';
+        var prevVal = isBody ? prev.bodySize : util.getCellValue(prev, column);
+        var nextVal = isBody ? next.bodySize : util.getCellValue(next, column);
+        if (isBody) {
+          if (prevVal === nextVal) {
+            return 0;
+          }
+          var flag = prevVal > nextVal ? 1 : -1;
+          return column.order == 'asc' ? flag : -flag;
+        }
         if (column.key) {
           prevVal = toStr(prevVal);
           nextVal = toStr(nextVal);
