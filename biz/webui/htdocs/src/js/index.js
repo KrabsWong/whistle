@@ -22,7 +22,6 @@ var storage = require('./storage');
 var Dialog = require('./dialog');
 var ListDialog = require('./list-dialog');
 var FilterBtn = require('./filter-btn');
-var EditorDialog = require('./editor-dialog');
 var message = require('./message');
 var UpdateAllBtn = require('./update-all-btn');
 var ContextMenu = require('./context-menu');
@@ -948,6 +947,15 @@ var Index = React.createClass({
       }
     });
 
+    if (isClient) {
+      var findEditor = function(keyword, prev) {
+        events.editorMatchedCount = 0;
+        events.trigger(prev ? 'findEditorPrev' : 'findEditorNext', keyword);
+        return events.editorMatchedCount;
+      };
+      window.__findWhistleCodeMirrorEditor_ = findEditor;
+    }
+
     var composerDidMount;
     var composerData;
 
@@ -1258,9 +1266,14 @@ var Index = React.createClass({
           }
         });
       })
-      .on('keydown', function (e) {
+      .on('keyup', function (e) {
         if ((e.metaKey || e.ctrlKey) && e.keyCode === 82) {
           e.preventDefault();
+        } else if (self.state.name == 'network' &&  e.keyCode === 191) {
+          var nodeName = document.activeElement && document.activeElement.nodeName;
+          if (nodeName !== 'INPUT' && nodeName !== 'TEXTAREA' && !$('.modal.in').length) {
+            events.trigger('focusNetworkFilterInput');
+          }
         }
       })
       .on('contextmenu', '.w-textarea-bar', function(e) {
@@ -5391,7 +5404,6 @@ var Index = React.createClass({
           <input ref="content" name="content" type="hidden" />
         </form>
         <IframeDialog ref="iframeDialog" />
-        <EditorDialog textEditor />
       </div>
     );
   }
